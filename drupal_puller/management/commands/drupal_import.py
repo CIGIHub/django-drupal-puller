@@ -40,7 +40,7 @@ class BaseImporter():
         self.connection.close()
 
     def get_database_configuration(self):
-        return settings.site_database_config[self.site_name]
+        return settings.SITE_DATABASE_CONFIG[self.site_name]
 
     def load_terms(self, model_class, connection):
         added_count = 0
