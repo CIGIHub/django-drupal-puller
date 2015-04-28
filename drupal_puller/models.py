@@ -4,8 +4,8 @@ from django.db import models
 class DrupalEntity(models.Model):
     eid = models.IntegerField()
 
-    pages = models.ManyToManyField('Page', blank=True, null=True)
-    aliases = models.ManyToManyField('DrupalUrlAlias', blank=True, null=True)
+    pages = models.ManyToManyField('Page')
+    aliases = models.ManyToManyField('DrupalUrlAlias')
 
     class Meta:
         abstract = True
@@ -22,8 +22,8 @@ class DrupalNode(models.Model):
     changed = models.DateField(null=True)
     #promote = models.IntegerField()
 
-    pages = models.ManyToManyField('Page', blank=True, null=True)
-    aliases = models.ManyToManyField('DrupalUrlAlias', blank=True, null=True)
+    pages = models.ManyToManyField('Page')
+    aliases = models.ManyToManyField('DrupalUrlAlias')
 
     #related_pages = models.ManyToManyField('Page', blank=True, null=True, related_name='related_%(app_label)s_%(class)s')
     def __unicode__(self):
