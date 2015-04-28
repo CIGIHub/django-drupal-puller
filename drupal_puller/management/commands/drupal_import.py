@@ -6,7 +6,7 @@ from collections import namedtuple
 from optparse import make_option
 
 
-import mysql.connector
+import MySQLdb
 import importlib
 import pytz
 
@@ -34,7 +34,7 @@ class BaseImporter():
 
     def open_connection(self):
         config = self.get_database_configuration()
-        self.connection = mysql.connector.connect(**config)
+        self.connection = MySQLdb.connect(**config)
 
     def close_connection(self):
         self.connection.close()
@@ -48,7 +48,8 @@ class BaseImporter():
         cursor = connection.cursor()
         query = "SELECT tid, name FROM {0} WHERE vid=%s".format(self.taxonomy_term_data_table_name)
         cursor.execute(query, (model_class.vocabulary_id(),))
-        for (tid, name) in cursor:
+        results = cursor.fetchall()
+        for (tid, name) in results:
             term, created = model_class.objects.get_or_create(source_id=tid)
             term.name = name
             term.save()
@@ -69,7 +70,8 @@ class BaseImporter():
 
         query = self.load_url_aliases_query
         cursor.execute(query)
-        for (pid, src, dst) in cursor:
+        results = cursor.fetchall()
+        for (pid, src, dst) in results:
             alias, created = alias_model.objects.get_or_create(pid=pid)
             alias.src = src
             alias.dst = dst
@@ -104,7 +106,8 @@ class BaseImporter():
                 "ORDER BY ct1.nid " % (extra_fields, content_type_table, content_type_table)
 
         cursor.execute(query)
-        for values in cursor:
+        results = cursor.fetchall()
+        for values in results:
             nid = values[0]
             vid = values[1]
             title = values[2]
@@ -163,7 +166,8 @@ class BaseImporter():
                         )
 
         cursor.execute(query)
-        for (nid, vid, linked_nid) in cursor:
+        results = cursor.fetchall()
+        for (nid, vid, linked_nid) in results:
             ct_object = content_type.objects.get(nid=nid)
 
             if linked_nid:
@@ -197,7 +201,8 @@ class BaseImporter():
                                        linked_content_field, linked_content_field)
 
         cursor.execute(query)
-        for (nid, data_value) in cursor:
+        results = cursor.fetchall()
+        for (nid, data_value) in results:
             ct_object = content_type.objects.get(nid=nid)
 
             linker(ct_object, data_value)
@@ -254,7 +259,8 @@ class Drupal7BaseImporter(BaseImporter):
         columns = ", ".join([c.drupal_name for c in column_map_list])
 
         cursor.execute(query.format(columns=columns, drupal_table_name=drupal_table_name))
-        for values in cursor:
+        results = cursor.fetchall()
+        for values in results:
             eid = values[0]
             entity, created = model_class.objects.get_or_create(eid=eid)
 
@@ -287,7 +293,6 @@ class Drupal7BaseImporter(BaseImporter):
 
         print("%s: Added %d, Update %d" % (model_class.__name__, added_count, updated_count))
 
-
     def load_drupal_nodes(self, connection, model_class, node_type_name, page_model, alias_model, page_matcher=None):
         added_count = 0
         updated_count = 0
@@ -298,7 +303,8 @@ class Drupal7BaseImporter(BaseImporter):
                 "WHERE n.type = '%s' " % (node_type_name)
 
         cursor.execute(query)
-        for values in cursor:
+        results = cursor.fetchall()
+        for values in results:
             nid = values[0]
             vid = values[1]
             title = values[2]
@@ -357,7 +363,8 @@ WHERE f.bundle = '{node_type_name}'
         )
 
         cursor.execute(query)
-        for data in cursor:
+        results = cursor.fetchall()
+        for data in results:
             nid = data[0]
             data_values = data[1:]
             ct_object = content_type.objects.get(nid=nid)
