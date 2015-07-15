@@ -11,6 +11,9 @@ import importlib
 import pytz
 
 
+verbosity = 1
+
+
 class BaseImporter():
     taxonomy_term_data_table_name = 'term_data'
     load_url_aliases_query = "SELECT pid, src, dst FROM url_alias"
@@ -61,7 +64,7 @@ class BaseImporter():
 
         cursor.close()
 
-        print("%ss: Added %d, Update %d" % (model_class.__name__, added_count, updated_count))
+        if verbosity > 1: print("%ss: Added %d, Update %d" % (model_class.__name__, added_count, updated_count))
 
     def load_url_aliases(self, connection, alias_model):
         added_count = 0
@@ -84,7 +87,7 @@ class BaseImporter():
 
         cursor.close()
 
-        print("Url Aliases: Added %d, Update %d" % (added_count, updated_count))
+        if verbosity > 1: print("Url Aliases: Added %d, Update %d" % (added_count, updated_count))
 
     def load_drupal_nodes(self, connection, content_type, content_type_table, page_model, alias_model,
                           additional_field_list=None, additional_field_setter=None, page_matcher=None):
@@ -141,7 +144,7 @@ class BaseImporter():
 
         cursor.close()
 
-        print("%s: Added %d, Update %d" % (content_type.__name__, added_count, updated_count))
+        if verbosity > 1: print("%s: Added %d, Update %d" % (content_type.__name__, added_count, updated_count))
 
     def load_node_references(self, connection, content_type, content_type_table,
                              linked_content_type, linked_content_type_table,
@@ -184,7 +187,7 @@ class BaseImporter():
 
         cursor.close()
 
-        print("Linked Nodes: %s, Unlinked Nodes: %s" % (linked_nodes, unlinked_nodes))
+        if verbosity > 1: print("Linked Nodes: %s, Unlinked Nodes: %s" % (linked_nodes, unlinked_nodes))
 
     @staticmethod
     def load_linked_data_field(connection, content_type, content_type_table, linked_content_field, linker):
@@ -210,7 +213,7 @@ class BaseImporter():
 
         cursor.close()
 
-        #print "Unlinked Authors Updated"
+        #if verbosity > 1: print "Unlinked Authors Updated"
 
     @staticmethod
     def match_to_pages(node, page_model, alias_model):
@@ -291,7 +294,7 @@ class Drupal7BaseImporter(BaseImporter):
 
         cursor.close()
 
-        print("%s: Added %d, Update %d" % (model_class.__name__, added_count, updated_count))
+        if verbosity > 1: print("%s: Added %d, Update %d" % (model_class.__name__, added_count, updated_count))
 
     def load_drupal_nodes(self, connection, model_class, node_type_name, page_model, alias_model, page_matcher=None):
         added_count = 0
@@ -334,7 +337,7 @@ class Drupal7BaseImporter(BaseImporter):
 
         cursor.close()
 
-        print("%s: Added %d, Update %d" % (model_class.__name__, added_count, updated_count))
+        if verbosity > 1: print("%s: Added %d, Update %d" % (model_class.__name__, added_count, updated_count))
 
     def load_linked_data_field(
         self,
@@ -404,6 +407,10 @@ class Command(BaseCommand):
 
     def handle(self, **options):
         app = options['app']
+
+        global verbosity
+        verbosity = options['verbosity']
+
         app_module = importlib.import_module(app)
 
         importer = app_module.Importer(app)
