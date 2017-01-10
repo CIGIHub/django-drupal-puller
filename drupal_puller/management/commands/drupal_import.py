@@ -50,7 +50,10 @@ class BaseImporter():
         updated_count = 0
         cursor = connection.cursor()
         query = "SELECT tid, name FROM {0} WHERE vid=%s".format(self.taxonomy_term_data_table_name)
-        cursor.execute(query, (model_class.vocabulary_id(),))
+
+        vocabulary_id = model_class.vocabulary_id if hasattr(model_class, 'vocabulary_id') else model_class.vocabulary_id()
+
+        cursor.execute(query, (vocabulary_id,))
         results = cursor.fetchall()
         for (tid, name) in results:
             term, created = model_class.objects.get_or_create(source_id=tid)
