@@ -220,29 +220,26 @@ class BaseImporter():
 
     @staticmethod
     def match_to_pages(node, page_model, alias_model):
-        try:
-            src = "node/%d" % node.nid
+        src = "node/%d" % node.nid
 
-            page, created = page_model.objects.get_or_create(page_path="/%s" % src)
+        page, created = page_model.objects.get_or_create(page_path="/%s" % src)
+        node.pages.add(page)
+
+        page, created = page_model.objects.get_or_create(page_path="/%s/" % src)
+        node.pages.add(page)
+
+        aliases = alias_model.objects.filter(src=src)
+        for alias in aliases:
+            node.aliases.add(alias)
+
+            page_path = "/%s" % alias.dst
+            page, created = page_model.objects.get_or_create(page_path=page_path)
             node.pages.add(page)
 
-            page, created = page_model.objects.get_or_create(page_path="/%s/" % src)
+            page_path = "/%s/" % alias.dst
+            page, created = page_model.objects.get_or_create(page_path=page_path)
             node.pages.add(page)
 
-            aliases = alias_model.objects.filter(src=src)
-            for alias in aliases:
-                node.aliases.add(alias)
-
-                page_path = "/%s" % alias.dst
-                page, created = page_model.objects.get_or_create(page_path=page_path)
-                node.pages.add(page)
-
-                page_path = "/%s/" % alias.dst
-                page, created = page_model.objects.get_or_create(page_path=page_path)
-                node.pages.add(page)
-
-        except alias_model.DoesNotExist:
-            print("Error could not find alias")
 
 ColumnMap = namedtuple('ColumnMap', 'drupal_name model_name type_or_map')
 def column_map(drupal_name, model_name=None, type_or_map=None):
@@ -499,6 +496,38 @@ WHERE f.bundle = '{bundle_name}'
                     value = self.field_type_converters[spec.field_type](value)
 
                 ret[nid][spec.name] = value
+
+        return ret
+
+    def get_taxonomy_data(self, connection, bundle_name, term_model):
+        '''
+        Return dict {nid: [term_instance,...]}
+        Callers job to know what context the nid should be in, can be reused.
+        '''
+        ret = {}
+        cursor = connection.cursor()
+
+        query = """
+SELECT t.entity_id, t.{vocabulary_id}_target_id
+FROM node__{vocabulary_id} t
+WHERE t.bundle = '{bundle_name}'
+"""
+
+        query = query.format(
+            vocabulary_id=term_model.vocabulary_id,
+            bundle_name=bundle_name,
+        )
+
+        cursor.execute(query)
+        results = cursor.fetchall()
+        for values in results:
+            nid, tid = values
+            term_instance = term_model.objects.get(source_id=tid)
+
+            if nid not in ret:
+                ret[nid] = []
+
+            ret[nid].append(term_instance)
 
         return ret
 
