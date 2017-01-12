@@ -402,6 +402,107 @@ WHERE f.bundle = '{node_type_name}'
             entity.pages.add(page)
 
 
+def string_converter(value):
+    return value.decode('latin1').strip()
+
+
+TFieldSpec = namedtuple('FieldSpec', ['name', 'field_type', 'default'])
+
+
+def FieldSpec(name, field_type='string', default=''):
+    return TFieldSpec(name, field_type, default)
+
+
+class Drupal8BaseImporter(BaseImporter):
+    taxonomy_term_data_table_name = 'taxonomy_term_field_data'
+    load_url_aliases_query = "SELECT pid, source, alias FROM url_alias"
+
+    field_type_converters = {
+        'string': string_converter,
+    }
+
+    def load_drupal_nodes(self, connection, model_class, node_type_name, page_model, alias_model, page_matcher=None):
+        '''
+        I think I am going to chnage the flow here...
+        After you load nodes you can link addition data...
+        '''
+        added_count = 0
+        updated_count = 0
+        cursor = connection.cursor()
+
+        query = "SELECT n.nid, n.vid, n.title, n.status, n.created, n.changed "\
+                "FROM  node_field_data n "\
+                "WHERE n.type = '%s' " % (node_type_name)
+
+        cursor.execute(query)
+        results = cursor.fetchall()
+        for values in results:
+            nid = values[0]
+            vid = values[1]
+            title = values[2]
+            status = values[3]
+            created_ts = values[4]
+            changed_ts = values[5]
+
+            node, node_created = model_class.objects.get_or_create(nid=nid)
+            node.vid = vid
+            node.title = string_converter(title)
+            node.status = status
+            node.created = datetime.fromtimestamp(created_ts)
+            node.changed = datetime.fromtimestamp(changed_ts)
+
+            node.save()
+
+            if page_matcher:
+                page_matcher(node, page_model, alias_model)
+            else:
+                self.match_to_pages(node, page_model, alias_model)
+
+
+            if node_created:
+                added_count += 1
+            else:
+                updated_count += 1
+
+        cursor.close()
+
+    def get_node_field_data(self, connection, bundle_name, specs):
+        '''
+        Grab all the data and return a dictionary in the format {entity_id: { spec.name: value }}
+        for all of the FieldSpecs in specs. The value has been converted based on field_type.
+        '''
+        ret = {}
+
+        for spec in specs:
+            cursor = connection.cursor()
+
+            query = """
+SELECT f.entity_id, f.field_{field_name}_value
+FROM node__field_{field_name} f
+WHERE f.bundle = '{bundle_name}'
+"""
+            query = query.format(
+                field_name=spec.name,
+                bundle_name=bundle_name,
+            )
+
+            cursor.execute(query)
+            results = cursor.fetchall()
+            for values in results:
+                nid = values[0]
+                value = values[1]
+
+                if nid not in ret:
+                    ret[nid] = dict([(s.name, s.default) for s in specs])
+
+                if spec.field_type in self.field_type_converters:
+                    value = self.field_type_converters[spec.field_type](value)
+
+                ret[nid][spec.name] = value
+
+        return ret
+
+
 class Command(BaseCommand):
     option_list = BaseCommand.option_list + (
         make_option('--app', '-s', dest='app', help='App name corresponding to Drupal site.'),
