@@ -8,6 +8,7 @@ from optparse import make_option
 
 import MySQLdb
 import importlib
+import re
 import pytz
 
 
@@ -329,7 +330,6 @@ class Drupal7BaseImporter(BaseImporter):
             else:
                 self.match_to_pages(node, page_model, alias_model)
 
-
             if node_created:
                 added_count += 1
             else:
@@ -403,6 +403,33 @@ def string_converter(value):
     return value.decode('latin1').strip()
 
 
+def datetime_converter(value):
+    value = value.strip()
+    if value != '':
+        return datetime.strptime(
+            value,
+            "%Y-%m-%dT%H:%M:%S",
+        ).replace(tzinfo=utc)
+    else:
+        return None
+
+
+def person_names_converter(names):
+    names = string_converter(names)
+    cleaned_names = names.replace("et al.", "").replace("Edited by", "")
+    name_list = re.split(',|\s+and\s+|\s+with\s+', cleaned_names)
+
+    def parse_name(name):
+        name_parts = name.strip().rsplit(None, 1)
+        return name_parts
+
+    return [parse_name(name) for name in name_list]
+
+
+def reference_converter(value):
+    return int(value)
+
+
 TFieldSpec = namedtuple('FieldSpec', ['name', 'field_type', 'default'])
 
 
@@ -416,6 +443,9 @@ class Drupal8BaseImporter(BaseImporter):
 
     field_type_converters = {
         'string': string_converter,
+        'datetime': datetime_converter,
+        'person_names': person_names_converter,
+        'reference': reference_converter,
     }
 
     def load_drupal_nodes(self, connection, model_class, node_type_name, page_model, alias_model, page_matcher=None):
@@ -455,7 +485,6 @@ class Drupal8BaseImporter(BaseImporter):
             else:
                 self.match_to_pages(node, page_model, alias_model)
 
-
             if node_created:
                 added_count += 1
             else:
@@ -473,12 +502,20 @@ class Drupal8BaseImporter(BaseImporter):
         for spec in specs:
             cursor = connection.cursor()
 
+            value_field_template = 'field_{field_name}_value'
+            if spec.field_type == 'reference':
+                value_field_template = 'field_{field_name}_target_id'
+
+            value_field_name = value_field_template.format(field_name=spec.name)
+
             query = """
-SELECT f.entity_id, f.field_{field_name}_value
+SELECT f.entity_id, f.{value_field_name}
 FROM node__field_{field_name} f
 WHERE f.bundle = '{bundle_name}'
+ORDER BY entity_id, delta
 """
             query = query.format(
+                value_field_name=value_field_name,
                 field_name=spec.name,
                 bundle_name=bundle_name,
             )
@@ -490,12 +527,23 @@ WHERE f.bundle = '{bundle_name}'
                 value = values[1]
 
                 if nid not in ret:
-                    ret[nid] = dict([(s.name, s.default) for s in specs])
+                    default_value = dict()
+
+                    for s in specs:
+                        default = s.default
+                        if callable(default):
+                            default = default()
+                        default_value[s.name] = default
+
+                    ret[nid] = default_value
 
                 if spec.field_type in self.field_type_converters:
                     value = self.field_type_converters[spec.field_type](value)
 
-                ret[nid][spec.name] = value
+                if isinstance(ret[nid][spec.name], list):
+                    ret[nid][spec.name].append(value)
+                else:
+                    ret[nid][spec.name] = value
 
         return ret
 
