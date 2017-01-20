@@ -547,7 +547,7 @@ ORDER BY entity_id, delta
 
         return ret
 
-    def get_taxonomy_data(self, connection, bundle_name, term_model):
+    def get_taxonomy_data(self, connection, bundle_name, term_model, is_field=False):
         '''
         Return dict {nid: [term_instance,...]}
         Callers job to know what context the nid should be in, can be reused.
@@ -555,14 +555,29 @@ ORDER BY entity_id, delta
         ret = {}
         cursor = connection.cursor()
 
+        field_template = "{vocabulary_id}_target_id"
+        if is_field:
+            field_template = "field_{vocabulary_id}_target_id"
+        field_name = field_template.format(
+            vocabulary_id=term_model.vocabulary_id
+        )
+
+        table_template = "node__{vocabulary_id}"
+        if is_field:
+            table_template = "node__field_{vocabulary_id}"
+        table_name = table_template.format(
+            vocabulary_id=term_model.vocabulary_id
+        )
+
         query = """
-SELECT t.entity_id, t.{vocabulary_id}_target_id
-FROM node__{vocabulary_id} t
+SELECT t.entity_id, t.{field_name}
+FROM {table_name} t
 WHERE t.bundle = '{bundle_name}'
 """
 
         query = query.format(
-            vocabulary_id=term_model.vocabulary_id,
+            field_name=field_name,
+            table_name=table_name,
             bundle_name=bundle_name,
         )
 
@@ -579,10 +594,37 @@ WHERE t.bundle = '{bundle_name}'
 
         return ret
 
+    @staticmethod
+    def match_to_pages(node, page_model, alias_model):
+        src = "/node/%d" % node.nid
+
+        page, created = page_model.objects.get_or_create(page_path=src)
+        node.pages.add(page)
+
+        page, created = page_model.objects.get_or_create(page_path="%s/" % src)
+        node.pages.add(page)
+
+        aliases = alias_model.objects.filter(src=src)
+        for alias in aliases:
+            node.aliases.add(alias)
+
+            page_path = "%s" % alias.dst
+            page, created = page_model.objects.get_or_create(page_path=page_path)
+            node.pages.add(page)
+
+            page_path = "%s/" % alias.dst
+            page, created = page_model.objects.get_or_create(page_path=page_path)
+            node.pages.add(page)
+
 
 class Command(BaseCommand):
     option_list = BaseCommand.option_list + (
-        make_option('--app', '-s', dest='app', help='App name corresponding to Drupal site.'),
+        make_option(
+            '--app',
+            '-s',
+            dest='app',
+            help='App name corresponding to Drupal site.'
+        ),
     )
     help = 'Imports drupal data'
 
