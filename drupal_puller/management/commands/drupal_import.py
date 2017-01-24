@@ -8,6 +8,7 @@ from optparse import make_option
 
 import MySQLdb
 import importlib
+import re
 import pytz
 
 
@@ -220,29 +221,26 @@ class BaseImporter():
 
     @staticmethod
     def match_to_pages(node, page_model, alias_model):
-        try:
-            src = "node/%d" % node.nid
+        src = "node/%d" % node.nid
 
-            page, created = page_model.objects.get_or_create(page_path="/%s" % src)
+        page, created = page_model.objects.get_or_create(page_path="/%s" % src)
+        node.pages.add(page)
+
+        page, created = page_model.objects.get_or_create(page_path="/%s/" % src)
+        node.pages.add(page)
+
+        aliases = alias_model.objects.filter(src=src)
+        for alias in aliases:
+            node.aliases.add(alias)
+
+            page_path = "/%s" % alias.dst
+            page, created = page_model.objects.get_or_create(page_path=page_path)
             node.pages.add(page)
 
-            page, created = page_model.objects.get_or_create(page_path="/%s/" % src)
+            page_path = "/%s/" % alias.dst
+            page, created = page_model.objects.get_or_create(page_path=page_path)
             node.pages.add(page)
 
-            aliases = alias_model.objects.filter(src=src)
-            for alias in aliases:
-                node.aliases.add(alias)
-
-                page_path = "/%s" % alias.dst
-                page, created = page_model.objects.get_or_create(page_path=page_path)
-                node.pages.add(page)
-
-                page_path = "/%s/" % alias.dst
-                page, created = page_model.objects.get_or_create(page_path=page_path)
-                node.pages.add(page)
-
-        except alias_model.DoesNotExist:
-            print("Error could not find alias")
 
 ColumnMap = namedtuple('ColumnMap', 'drupal_name model_name type_or_map')
 def column_map(drupal_name, model_name=None, type_or_map=None):
@@ -332,7 +330,6 @@ class Drupal7BaseImporter(BaseImporter):
             else:
                 self.match_to_pages(node, page_model, alias_model)
 
-
             if node_created:
                 added_count += 1
             else:
@@ -402,9 +399,232 @@ WHERE f.bundle = '{node_type_name}'
             entity.pages.add(page)
 
 
+def string_converter(value):
+    return value.decode('latin1').strip()
+
+
+def datetime_converter(value):
+    value = value.strip()
+    if value != '':
+        return datetime.strptime(
+            value,
+            "%Y-%m-%dT%H:%M:%S",
+        ).replace(tzinfo=utc)
+    else:
+        return None
+
+
+def person_names_converter(names):
+    names = string_converter(names)
+    cleaned_names = names.replace("et al.", "").replace("Edited by", "")
+    name_list = re.split(',|\s+and\s+|\s+with\s+', cleaned_names)
+
+    def parse_name(name):
+        name_parts = name.strip().rsplit(None, 1)
+        return name_parts
+
+    return [parse_name(name) for name in name_list]
+
+
+def reference_converter(value):
+    return int(value)
+
+
+TFieldSpec = namedtuple('FieldSpec', ['name', 'field_type', 'default'])
+
+
+def FieldSpec(name, field_type='string', default=''):
+    return TFieldSpec(name, field_type, default)
+
+
+class Drupal8BaseImporter(BaseImporter):
+    taxonomy_term_data_table_name = 'taxonomy_term_field_data'
+    load_url_aliases_query = "SELECT pid, source, alias FROM url_alias"
+
+    field_type_converters = {
+        'string': string_converter,
+        'datetime': datetime_converter,
+        'person_names': person_names_converter,
+        'reference': reference_converter,
+    }
+
+    def load_drupal_nodes(self, connection, model_class, node_type_name, page_model, alias_model, page_matcher=None):
+        '''
+        I think I am going to chnage the flow here...
+        After you load nodes you can link addition data...
+        '''
+        added_count = 0
+        updated_count = 0
+        cursor = connection.cursor()
+
+        query = "SELECT n.nid, n.vid, n.title, n.status, n.created, n.changed "\
+                "FROM  node_field_data n "\
+                "WHERE n.type = '%s' " % (node_type_name)
+
+        cursor.execute(query)
+        results = cursor.fetchall()
+        for values in results:
+            nid = values[0]
+            vid = values[1]
+            title = values[2]
+            status = values[3]
+            created_ts = values[4]
+            changed_ts = values[5]
+
+            node, node_created = model_class.objects.get_or_create(nid=nid)
+            node.vid = vid
+            node.title = string_converter(title)
+            node.status = status
+            node.created = datetime.fromtimestamp(created_ts)
+            node.changed = datetime.fromtimestamp(changed_ts)
+
+            node.save()
+
+            if page_matcher:
+                page_matcher(node, page_model, alias_model)
+            else:
+                self.match_to_pages(node, page_model, alias_model)
+
+            if node_created:
+                added_count += 1
+            else:
+                updated_count += 1
+
+        cursor.close()
+
+    def get_node_field_data(self, connection, bundle_name, specs):
+        '''
+        Grab all the data and return a dictionary in the format {entity_id: { spec.name: value }}
+        for all of the FieldSpecs in specs. The value has been converted based on field_type.
+        '''
+        ret = {}
+
+        for spec in specs:
+            cursor = connection.cursor()
+
+            value_field_template = 'field_{field_name}_value'
+            if spec.field_type == 'reference':
+                value_field_template = 'field_{field_name}_target_id'
+
+            value_field_name = value_field_template.format(field_name=spec.name)
+
+            query = """
+SELECT f.entity_id, f.{value_field_name}
+FROM node__field_{field_name} f
+WHERE f.bundle = '{bundle_name}'
+ORDER BY entity_id, delta
+"""
+            query = query.format(
+                value_field_name=value_field_name,
+                field_name=spec.name,
+                bundle_name=bundle_name,
+            )
+
+            cursor.execute(query)
+            results = cursor.fetchall()
+            for values in results:
+                nid = values[0]
+                value = values[1]
+
+                if nid not in ret:
+                    default_value = dict()
+
+                    for s in specs:
+                        default = s.default
+                        if callable(default):
+                            default = default()
+                        default_value[s.name] = default
+
+                    ret[nid] = default_value
+
+                if spec.field_type in self.field_type_converters:
+                    value = self.field_type_converters[spec.field_type](value)
+
+                if isinstance(ret[nid][spec.name], list):
+                    ret[nid][spec.name].append(value)
+                else:
+                    ret[nid][spec.name] = value
+
+        return ret
+
+    def get_taxonomy_data(self, connection, bundle_name, term_model, is_field=False):
+        '''
+        Return dict {nid: [term_instance,...]}
+        Callers job to know what context the nid should be in, can be reused.
+        '''
+        ret = {}
+        cursor = connection.cursor()
+
+        field_template = "{vocabulary_id}_target_id"
+        if is_field:
+            field_template = "field_{vocabulary_id}_target_id"
+        field_name = field_template.format(
+            vocabulary_id=term_model.vocabulary_id
+        )
+
+        table_template = "node__{vocabulary_id}"
+        if is_field:
+            table_template = "node__field_{vocabulary_id}"
+        table_name = table_template.format(
+            vocabulary_id=term_model.vocabulary_id
+        )
+
+        query = """
+SELECT t.entity_id, t.{field_name}
+FROM {table_name} t
+WHERE t.bundle = '{bundle_name}'
+"""
+
+        query = query.format(
+            field_name=field_name,
+            table_name=table_name,
+            bundle_name=bundle_name,
+        )
+
+        cursor.execute(query)
+        results = cursor.fetchall()
+        for values in results:
+            nid, tid = values
+            term_instance = term_model.objects.get(source_id=tid)
+
+            if nid not in ret:
+                ret[nid] = []
+
+            ret[nid].append(term_instance)
+
+        return ret
+
+    @staticmethod
+    def match_to_pages(node, page_model, alias_model):
+        src = "/node/%d" % node.nid
+
+        page, created = page_model.objects.get_or_create(page_path=src)
+        node.pages.add(page)
+
+        page, created = page_model.objects.get_or_create(page_path="%s/" % src)
+        node.pages.add(page)
+
+        aliases = alias_model.objects.filter(src=src)
+        for alias in aliases:
+            node.aliases.add(alias)
+
+            page_path = "%s" % alias.dst
+            page, created = page_model.objects.get_or_create(page_path=page_path)
+            node.pages.add(page)
+
+            page_path = "%s/" % alias.dst
+            page, created = page_model.objects.get_or_create(page_path=page_path)
+            node.pages.add(page)
+
+
 class Command(BaseCommand):
     option_list = BaseCommand.option_list + (
-        make_option('--app', '-s', dest='app', help='App name corresponding to Drupal site.'),
+        make_option(
+            '--app',
+            '-s',
+            dest='app',
+            help='App name corresponding to Drupal site.'
+        ),
     )
     help = 'Imports drupal data'
 
