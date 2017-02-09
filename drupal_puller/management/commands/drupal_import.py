@@ -10,6 +10,7 @@ import MySQLdb
 import importlib
 import re
 import pytz
+import six
 
 
 verbosity = 1
@@ -400,7 +401,10 @@ WHERE f.bundle = '{node_type_name}'
 
 
 def string_converter(value):
-    return value.decode('latin1').strip()
+    if six.PY2:
+        return value.decode('latin1').strip()
+    else:
+        return value.strip()
 
 
 def datetime_converter(value):
