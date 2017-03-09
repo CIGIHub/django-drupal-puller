@@ -59,3 +59,26 @@ class DrupalUrlAliasBase(models.Model):
 
     class Meta:
         abstract = True
+
+
+class DrupalRedirectBase(models.Model):
+    rid = models.IntegerField()
+    type = models.CharField(max_length=255, null=True)
+    uid = models.CharField(max_length=128, null=True)
+    language = models.CharField(max_length=12, null=True)
+    hash = models.CharField(max_length=64, null=True)
+    uid = models.IntegerField(null=True)
+
+    redirect_source_path = models.CharField(max_length=2048, null=True)
+    redirect_source_query = models.TextField(null=True)
+    redirect_redirect_uri = models.CharField(max_length=2048, null=True)
+    redirect_redirect_title = models.CharField(max_length=255, null=True)
+    redirect_redirect_options = models.TextField(null=True)
+
+    status_code = models.IntegerField(null=True)
+
+    def __unicode__(self):
+        return "%s" % self.redirect_redirect_uri
+
+    class Meta:
+        abstract = True

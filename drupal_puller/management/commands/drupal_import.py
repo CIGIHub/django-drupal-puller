@@ -452,7 +452,35 @@ class Drupal8BaseImporter(BaseImporter):
         'reference': reference_converter,
     }
 
-    def load_drupal_nodes(self, connection, model_class, node_type_name, page_model, alias_model, page_matcher=None):
+    def load_redirects(self, connection, redirect_model):
+        added_count = 0
+        updated_count = 0
+        cursor = connection.cursor()
+
+        query = '''
+SELECT r.rid, r.type, r.uid, r.language, r.hash, r.uid, r.redirect_source__path, r.redirect_source__query, r.redirect_redirect__uri, r.redirect_redirect__title, r.redirect_redirect__options, r.status_code
+FROM redirect r
+'''
+        cursor.execute(query)
+        results = cursor.fetchall()
+        for data in results:
+            redirect_data = dict(zip(
+                ('rid', 'type', 'uid', 'language', 'hash', 'uid', 'redirect_source_path', 'redirect_source_query' , 'redirect_redirect_uri', 'redirect_redirect_title', 'redirect_redirect_options', 'status_code'),
+                data
+            ))
+            redirect, created = redirect_model.objects.get_or_create(rid=redirect_data['rid'])
+            redirect_model.objects.filter(rid=redirect.rid).update(**redirect_data)
+
+            if created:
+                added_count += 1
+            else:
+                updated_count += 1
+
+        cursor.close()
+
+        if verbosity > 1: print("Url Redirect: Added %d, Update %d" % (added_count, updated_count))
+
+    def load_drupal_nodes(self, connection, model_class, node_type_name, page_model, alias_model, redirect_model, page_matcher=None):
         '''
         I think I am going to chnage the flow here...
         After you load nodes you can link addition data...
@@ -488,6 +516,8 @@ class Drupal8BaseImporter(BaseImporter):
                 page_matcher(node, page_model, alias_model)
             else:
                 self.match_to_pages(node, page_model, alias_model)
+
+            self.match_to_redirect(node, page_model, redirect_model)
 
             if node_created:
                 added_count += 1
@@ -617,6 +647,17 @@ WHERE t.bundle = '{bundle_name}'
             node.pages.add(page)
 
             page_path = "%s/" % alias.dst
+            page, created = page_model.objects.get_or_create(page_path=page_path)
+            node.pages.add(page)
+
+    @staticmethod
+    def match_to_redirect(node, page_model, redirect_model):
+        dest = 'internal:/node/{}'.format(node.nid)
+
+        redirects = redirect_model.objects.filter(redirect_redirect_uri=dest)
+        for redirect in redirects:
+            page_path = '/{}'.format(redirect.redirect_source_path)
+
             page, created = page_model.objects.get_or_create(page_path=page_path)
             node.pages.add(page)
 
